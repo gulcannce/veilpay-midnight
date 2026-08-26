@@ -1,0 +1,11 @@
+pragma language_version 0.26;
+
+import CompactStandardLibrary;
+
+witness getPrivateBudget(): Uint<64>;
+
+export circuit canSpend(price: Uint<64>): Boolean {
+  const budget = getPrivateBudget();
+
+  return price <= budget;
+}
