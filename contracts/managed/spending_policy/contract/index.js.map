@@ -1,0 +1,8 @@
+{
+  "version": 3,
+  "file": "index.js",
+  "sourceRoot": "../../../../",
+  "sources": ["contracts/spending_policy.compact"],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;EASA;;;;;;;;;;;;;MAIA,AAAA,QAIC;;;;;cAJuB,OAAe;;;;;;;;;;;;;;;;;;yCAAf,OAAe;;;;;;;qEAAf,OAAe;;;OAItC;;;;GANA;EAFD;;;;;UAAY,SAAiB;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;IAJ7B;;;;;;;;;yEAAsC;IAKpC;;;;;;;2HAAyB,SAAO;;yEAAnB;;;;;;;GACd;EAJD,AAAA,mBAAqC;;0DAArC,gBAAqC;;;;;;;;;;;;;;GAAA;EAMrC,AAAA,WAIC,4BAJuB,OAAe;UAC/B,QAA2B;QAEjB,GAAkB;0CAAlB;;;;;;;;;;;+GAAa;YAAb,GAAkB;;WAAI,OAAK,IAAI,QAAM;GACtD;;;;;;;;;;;;;;;;IAZD;qCAAA;;;;;;;;;;;0GAAsC;KAAA;;;;;;;;;;;;"
+}

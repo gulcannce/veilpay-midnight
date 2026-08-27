@@ -3,9 +3,13 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "engines": {
+    "node": ">=22 <23"
+  },
   "scripts": {
     "test": "vitest run",
-    "compile": "compact compile contracts/spending_policy.compact build"
+    "compile": "compact compile contracts/spending_policy.compact contracts/managed/spending_policy",
+    "proof-server": "docker run --rm -p 6300:6300 midnightntwrk/proof-server:8.1.0 midnight-proof-server -v"
   },
   "keywords": [],
   "author": "",

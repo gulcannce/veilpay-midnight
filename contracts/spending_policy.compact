@@ -2,10 +2,17 @@ pragma language_version 0.23;
 
 import CompactStandardLibrary;
 
+// Public contract metadata. The budget itself is never stored on chain.
+export ledger policyVersion: Uint<64>;
+
 witness getPrivateBudget(): Uint<64>;
+
+constructor(version: Uint<64>) {
+  policyVersion = disclose(version);
+}
 
 export circuit canSpend(price: Uint<64>): Boolean {
   const budget = getPrivateBudget();
 
-  return disclose(price <= budget);
+  return disclose(policyVersion >= 1 && price <= budget);
 }
