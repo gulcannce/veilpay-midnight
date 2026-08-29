@@ -6,4 +6,6 @@ build/
 !.env.example
 logs/
 .states/
+# Private state stores: hold the local budget plus encryption keys and salt.
 veilpay-spending-policy*/
+midnight-level-db/

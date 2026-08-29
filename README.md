@@ -140,13 +140,15 @@ VEILPAY_NETWORK=preprod npm run deploy
 
 The wallet seed is a secret. `.env` is gitignored (only `.env.example` is tracked) — never commit a real seed.
 
-A fresh seed scans the chain from genesis, which takes roughly 20-30 minutes on Preview; the script prints progress every fifteen seconds. If the wallet holds no NIGHT, the script then requests tokens from the network faucet and registers the received UTXOs for dust generation before deploying. On success it prints the deployment details and writes them to `deployment.<network>.json`. Fill the values in below and add the two screenshots to the repository:
+A fresh seed scans the chain from genesis, which takes roughly 20-30 minutes on Preview; the script prints progress every fifteen seconds. If the wallet holds no NIGHT, the script then requests tokens from the network faucet and registers the received UTXOs for dust generation before deploying. On success it prints the deployment details and writes them to `deployment.<network>.json`. The deployed instance:
 
 ```text
-Network: <preview or preprod>
-Contract address: <published address>
-Deployment transaction: <transaction id>
+Network: preview
+Contract address: 4cadbd77b6decdc66102de0c91db539eeaa3ee876d1613ae44debde3e550dd0f
+Deployment transaction: 006017deda3ff7f9560848d160f21f727677b8c9ad9e048a7cd7b6ed9547034e17
 ```
+
+Deployed at block 634539 on 2026-08-29 with `policyVersion` 1.
 
 As submission evidence, the build terminal screenshot should show the `canSpend` circuit and the `keys/` output, and the deployment screenshot should show the network together with the contract address.
 
@@ -157,10 +159,10 @@ As submission evidence, the build terminal screenshot should show the `canSpend`
 | Toolchain installed, contract compiles via `compact compile` | Done — Compact 0.31.1, Node 22, Docker |
 | Passing test suite | Done — 15 tests, typecheck clean |
 | Generated `managed/` directory (circuits + keys) | Done |
-| Deployed to Preview or Preprod with a visible contract address | Pending — run `npm run deploy` |
+| Deployed to Preview or Preprod with a visible contract address | Done — Preview, `4cadbd77b6decdc66102de0c91db539eeaa3ee876d1613ae44debde3e550dd0f` |
 | Initial product idea in the README | Done |
 | Minimum 5 meaningful commits | Done |
-| Screenshot: successful compile output with circuits listed | Pending — `docs/screenshots/compile.png` |
+| Screenshot: successful compile output with circuits listed | Done — `docs/screenshots/compile.png` |
 | Screenshot: deployment with the contract address shown | Pending — `docs/screenshots/deploy.png` |
 
 Take the compile screenshot in a real terminal: the compiler renders the circuit list interactively, so it disappears if the output is piped or redirected to a file.

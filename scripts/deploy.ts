@@ -12,6 +12,8 @@
  *   VEILPAY_POLICY_VERSION  initial public policy version (default 1)
  *   VEILPAY_BUDGET          initial private budget, never leaves this machine (default 1000)
  *   VEILPAY_SYNC_TIMEOUT_MS wallet sync budget (default 3600000, i.e. 60 minutes)
+ *   VEILPAY_SETTLE_TIMEOUT_MS how long to wait for an in-flight funding or dust
+ *                           registration transaction to land (default 180000)
  */
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,6 +22,7 @@ import { pipe } from 'effect';
 import * as CompiledContract from '@midnight-ntwrk/compact-js/effect/CompiledContract';
 import { deployContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
+import { unshieldedToken } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 import {
   MidnightWalletProvider,
   PreprodTestEnvironment,
@@ -41,6 +44,7 @@ type SyncProgressLike = {
 const PROJECT_ROOT = join(import.meta.dirname, '..');
 const PRIVATE_STATE_ID = 'veilpay-spending-policy';
 const ZK_CONFIG_PATH = 'contracts/managed/spending_policy';
+const NIGHT_TOKEN = unshieldedToken().raw;
 
 // loadEnvFile leaves already-exported variables untouched, so an explicit
 // `export` in the shell still overrides whatever .env holds.
@@ -151,6 +155,44 @@ const waitForFullSync = async (
   logger.info(`Wallet synced in ${Math.round((Date.now() - startedAt) / 60_000)} min`);
 };
 
+const readNightBalance = async (wallet: MidnightWalletProvider['wallet']): Promise<bigint> => {
+  const state = await Rx.firstValueFrom(wallet.state());
+  return state.unshielded.balances[NIGHT_TOKEN] ?? 0n;
+};
+
+/**
+ * Waits for the NIGHT balance to become non-zero.
+ *
+ * Dust registration spends the wallet's NIGHT UTXO and re-creates it as a
+ * registered one, so between submitting that transaction and it landing in a
+ * block the balance legitimately reads zero. Resolves to 0n on timeout and
+ * lets the caller decide that the wallet really is empty.
+ */
+const waitForNightBalance = async (
+  wallet: MidnightWalletProvider['wallet'],
+  timeoutMs: number,
+): Promise<bigint> =>
+  Rx.firstValueFrom(
+    wallet.state().pipe(
+      Rx.map((state): bigint => state.unshielded.balances[NIGHT_TOKEN] ?? 0n),
+      Rx.filter((value) => value > 0n),
+      Rx.timeout({ each: timeoutMs, with: () => Rx.of(0n) }),
+    ),
+  );
+
+/**
+ * Reads the HTTP status off a faucet failure.
+ *
+ * testkit talks to the faucet with axios, which is not a direct dependency
+ * here, so this duck-types the shape rather than importing it. Only the status
+ * is pulled out: an axios error also carries `config.headers`, and letting the
+ * whole object reach a log or an error `cause` would print request credentials.
+ */
+const httpStatus = (error: unknown): number | undefined => {
+  const status = (error as { response?: { status?: unknown } } | null | undefined)?.response?.status;
+  return typeof status === 'number' ? status : undefined;
+};
+
 const main = async (): Promise<void> => {
   const logger = createLogger('veilpay-deploy.log', 'logs');
   const seed = requireEnv('VEILPAY_WALLET_SEED');
@@ -183,15 +225,46 @@ const main = async (): Promise<void> => {
   await walletProvider.wallet.start(walletProvider.zswapSecretKeys, walletProvider.dustSecretKey);
   await waitForFullSync(walletProvider.wallet, logger, syncTimeoutMs);
 
-  const balance = await waitForFunds(
-    walletProvider.wallet,
-    environment,
-    true,
-    walletProvider.unshieldedKeystore,
-  );
+  // waitForFunds() bundles three steps: read the balance, request from the
+  // faucet, register NIGHT for dust generation. Decide the faucet question here
+  // instead of leaving it implicit, so a funded wallet never touches it.
+  const fundedBefore = await readNightBalance(walletProvider.wallet);
+  const needsFaucet = fundedBefore === 0n;
+  if (!needsFaucet) {
+    logger.info(`Wallet already holds ${fundedBefore} NIGHT; skipping the faucet.`);
+  }
+
+  const settleTimeoutMs = Number(process.env.VEILPAY_SETTLE_TIMEOUT_MS ?? 180_000);
+  let balance: bigint;
+  try {
+    balance = await waitForFunds(
+      walletProvider.wallet,
+      environment,
+      needsFaucet,
+      walletProvider.unshieldedKeystore,
+    );
+  } catch (error) {
+    // testkit tolerates only HTTP 429, so every other faucet response — notably
+    // the 403 the public faucet returns because its captcha cannot be satisfied
+    // from a script — arrives here as a raw client error with no useful text.
+    const status = needsFaucet ? httpStatus(error) : undefined;
+    if (status !== undefined) {
+      throw new Error(
+        `The ${environment.networkId} faucet rejected the automated request (HTTP ${status}). ` +
+          'Its captcha cannot be answered from this script. Fund the wallet address logged ' +
+          `above at ${environment.faucet ?? 'the network faucet'} in a browser, then deploy again.`,
+      );
+    }
+    throw error;
+  }
+
+  if (balance === 0n) {
+    logger.info('NIGHT balance reads zero; waiting for in-flight transactions to settle...');
+    balance = await waitForNightBalance(walletProvider.wallet, settleTimeoutMs);
+  }
   if (balance === 0n) {
     throw new Error(
-      'Wallet holds no NIGHT after the faucet request. Fund it manually and run the deploy again.',
+      'Wallet holds no NIGHT. Fund it from the network faucet in a browser and deploy again.',
     );
   }
   logger.info(`Wallet NIGHT balance: ${balance}`);
