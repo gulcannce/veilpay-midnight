@@ -1,7 +1,7 @@
 {
   "name": "veilpay",
   "version": "1.0.0",
-  "description": "",
+  "description": "Private spending policy on Midnight: prove a purchase is within budget without revealing the budget.",
   "main": "index.js",
   "engines": {
     "node": ">=22 <23"
@@ -9,13 +9,16 @@
   "scripts": {
     "test": "vitest run",
     "compile": "compact compile contracts/spending_policy.compact contracts/managed/spending_policy",
-    "proof-server": "docker run --rm -p 6300:6300 midnightntwrk/proof-server:8.1.0 midnight-proof-server -v"
+    "proof-server": "docker run --rm -p 6300:6300 midnightntwrk/proof-server:8.1.0 midnight-proof-server -v",
+    "typecheck": "tsc -p tsconfig.json",
+    "deploy": "node scripts/deploy.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@midnight-ntwrk/compact-js": "^2.5.1",
     "@midnight-ntwrk/compact-runtime": "^0.16.0",
     "@midnight-ntwrk/midnight-js-contracts": "^4.1.1",
     "@midnight-ntwrk/midnight-js-http-client-proof-provider": "^4.1.1",
@@ -26,10 +29,14 @@
     "@midnight-ntwrk/midnight-js-protocol": "^4.1.1",
     "@midnight-ntwrk/midnight-js-types": "^4.1.1",
     "@midnight-ntwrk/midnight-js-utils": "^4.1.1",
-    "@midnight-ntwrk/testkit-js": "^4.1.1"
+    "@midnight-ntwrk/testkit-js": "^4.1.1",
+    "effect": "^3.22.1",
+    "rxjs": "^7.8.2"
   },
   "devDependencies": {
+    "@midnight-ntwrk/ledger-v8": "^8.1.0",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "@types/node": "^22.10.0"
   }
 }
