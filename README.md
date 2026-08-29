@@ -163,7 +163,7 @@ As submission evidence, the build terminal screenshot should show the `canSpend`
 | Initial product idea in the README | Done |
 | Minimum 5 meaningful commits | Done |
 | Screenshot: successful compile output with circuits listed | Done — `docs/screenshots/compile.png` |
-| Screenshot: deployment with the contract address shown | Pending — `docs/screenshots/deploy.png` |
+| Screenshot: deployment with the contract address shown | Done — `docs/screenshots/deploy.png` |
 
 Take the compile screenshot in a real terminal: the compiler renders the circuit list interactively, so it disappears if the output is piped or redirected to a file.
 
