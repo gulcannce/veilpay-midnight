@@ -30,13 +30,14 @@
     "@midnight-ntwrk/midnight-js-types": "^4.1.1",
     "@midnight-ntwrk/midnight-js-utils": "^4.1.1",
     "@midnight-ntwrk/testkit-js": "^4.1.1",
+    "@midnight-ntwrk/wallet-sdk": "^1.1.0",
     "effect": "^3.22.1",
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
     "@midnight-ntwrk/ledger-v8": "^8.1.0",
+    "@types/node": "^22.10.0",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.11",
-    "@types/node": "^22.10.0"
+    "vitest": "^4.1.11"
   }
 }

@@ -14,6 +14,11 @@
  *   VEILPAY_SYNC_TIMEOUT_MS wallet sync budget (default 3600000, i.e. 60 minutes)
  *   VEILPAY_SETTLE_TIMEOUT_MS how long to wait for an in-flight funding or dust
  *                           registration transaction to land (default 180000)
+ *   VEILPAY_CHECKPOINT_MS   how often to persist sync progress (default 300000);
+ *                           0 disables checkpointing
+ *   VEILPAY_CHECKPOINT_DIR  where checkpoints are written (default .states)
+ *   VEILPAY_SYNC_ONLY       set to 1 to sync and checkpoint, then stop without
+ *                           touching the faucet or deploying anything
  */
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -34,6 +39,10 @@ import {
 } from '@midnight-ntwrk/testkit-js';
 import { Contract } from '../contracts/managed/spending_policy/contract/index.js';
 import { createPrivateState, witnesses, type VeilPayPrivateState } from '../src/midnight/witnesses.ts';
+import {
+  buildCheckpointedWallet,
+  DEFAULT_CHECKPOINT_DIRECTORY,
+} from './walletCheckpoint.ts';
 
 type SyncProgressLike = {
   readonly isConnected: boolean;
@@ -92,12 +101,49 @@ const waitForFullSync = async (
   wallet: MidnightWalletProvider['wallet'],
   logger: ReturnType<typeof createLogger>,
   timeoutMs: number,
+  checkpoint: { readonly save: () => Promise<void>; readonly everyMs: number } | null,
 ): Promise<void> => {
   logger.info('Syncing wallet with the network...');
   logger.info('A fresh seed scans the chain from genesis; expect roughly 20-30 minutes.');
+  if (checkpoint) {
+    logger.info(
+      `Progress is checkpointed every ${Math.round(checkpoint.everyMs / 60_000)} min; ` +
+        'an interrupted run resumes rather than restarting.',
+    );
+  }
 
   const startedAt = Date.now();
   let lastLoggedAt = 0;
+  let lastCheckpointAt = Date.now();
+  // Checkpoints are fire-and-forget against a stream that emits many times per
+  // second. Without this guard a slow serialization would be re-entered before
+  // it finished and the writes would race each other.
+  let checkpointInFlight = false;
+
+  /**
+   * Persists progress without interrupting the sync.
+   *
+   * A failed checkpoint is logged and swallowed: it costs the next run some
+   * catching up, whereas letting it reject would abort a sync that is otherwise
+   * healthy — the opposite of what checkpointing is for.
+   */
+  const maybeCheckpoint = (now: number): void => {
+    if (!checkpoint || checkpointInFlight || now - lastCheckpointAt < checkpoint.everyMs) {
+      return;
+    }
+    checkpointInFlight = true;
+    lastCheckpointAt = now;
+    void checkpoint
+      .save()
+      .catch((error: unknown) => {
+        logger.warn(
+          `Checkpoint failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      })
+      .finally(() => {
+        checkpointInFlight = false;
+      });
+  };
 
   // progress.isStrictlyComplete() is `isConnected && appliedIndex === highestRelevantWalletIndex`,
   // so the wallet has to catch all the way up to the tip before deployment can start.
@@ -118,6 +164,7 @@ const waitForFullSync = async (
     wallet.state().pipe(
       Rx.tap((state) => {
         const now = Date.now();
+        maybeCheckpoint(now);
         // The wallet emits many times per second; report every 15s instead.
         if (now - lastLoggedAt < 15_000) {
           return;
@@ -208,22 +255,67 @@ const main = async (): Promise<void> => {
 
   logger.info(`Deploying to ${environment.networkId} via proof server ${environment.proofServer}`);
 
-  // testkit logs the master seed at info level while building the wallet; keep it
-  // out of stdout and out of logs/.
-  const walletProvider = await (async () => {
-    const previousLevel = logger.level;
-    logger.level = 'warn';
-    try {
-      return await MidnightWalletProvider.build(logger, environment, seed);
-    } finally {
-      logger.level = previousLevel;
-    }
-  })();
+  // No log suppression here, unlike the earlier `MidnightWalletProvider.build`
+  // path: that one printed the master seed at info level, so it had to be
+  // muted. Building the wallet ourselves never touches the seed logging in
+  // testkit — `withWallet` only stores what it is handed — and muting would now
+  // hide which checkpoint we resumed from, which is the one thing worth seeing.
+  const { walletProvider, saveCheckpoint } = await buildCheckpointedWallet(
+    logger,
+    environment,
+    seed,
+    process.env.VEILPAY_CHECKPOINT_DIR ?? DEFAULT_CHECKPOINT_DIRECTORY,
+  );
+
+  const checkpointMs = Number(process.env.VEILPAY_CHECKPOINT_MS ?? 300_000);
+  const checkpoint = checkpointMs > 0 ? { save: saveCheckpoint, everyMs: checkpointMs } : null;
+
+  // Ctrl-C is how both abandoned Preprod attempts ended, and it is what threw
+  // their progress away. Save before leaving, and only then hand the signal back
+  // to the default behaviour.
+  let interrupted = false;
+  const onInterrupt = (): void => {
+    if (interrupted) return;
+    interrupted = true;
+    logger.info('Interrupted — saving the wallet checkpoint before exiting...');
+    void (checkpoint ? checkpoint.save() : Promise.resolve())
+      .catch((error: unknown) => {
+        logger.warn(
+          `Checkpoint on exit failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      })
+      .finally(() => {
+        // 130 is the conventional status for a process ended by SIGINT.
+        process.exit(130);
+      });
+  };
+  process.once('SIGINT', onInterrupt);
+  process.once('SIGTERM', onInterrupt);
+
   // Drive startup ourselves rather than walletProvider.start(true), so the
   // initial sync gets a realistic time budget.
   const syncTimeoutMs = Number(process.env.VEILPAY_SYNC_TIMEOUT_MS ?? 3_600_000);
   await walletProvider.wallet.start(walletProvider.zswapSecretKeys, walletProvider.dustSecretKey);
-  await waitForFullSync(walletProvider.wallet, logger, syncTimeoutMs);
+  await waitForFullSync(walletProvider.wallet, logger, syncTimeoutMs, checkpoint);
+  // The most valuable checkpoint of all: a fully synced wallet, so a failure in
+  // funding or deployment below never costs the sync again.
+  if (checkpoint) {
+    await checkpoint.save().catch((error: unknown) => {
+      logger.warn(
+        `Post-sync checkpoint failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  }
+
+  // Syncing is the expensive half and deploying is the irreversible one, so they
+  // are separable: sync now, checkpoint, and deploy in a later run that starts
+  // from the saved state in seconds rather than hours.
+  if (process.env.VEILPAY_SYNC_ONLY === '1') {
+    logger.info('VEILPAY_SYNC_ONLY=1 — wallet is synced and checkpointed. Nothing was deployed.');
+    console.log('\nWallet synced and checkpointed. Re-run without VEILPAY_SYNC_ONLY to deploy.');
+    await walletProvider.stop();
+    return;
+  }
 
   // waitForFunds() bundles three steps: read the balance, request from the
   // faucet, register NIGHT for dust generation. Decide the faucet question here
