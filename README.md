@@ -2,20 +2,26 @@
 
 VeilPay is a payment policy on Midnight that checks purchases against a private budget. A user proves that a purchase amount is allowed without revealing the budget itself; the merchant and the chain only learn that a policy is active and that the spend was approved or rejected.
 
-## Current status — Level 1
+## Current status
 
-**Working and verified locally:**
+**Level 1 — complete and verified.**
 
 - The Compact contract compiles with Compact 0.31.1, producing the managed contract, the `canSpend` circuit IR, and prover/verifier keys.
-- `canSpend()` is exercised through the **Midnight JavaScript runtime/interpreter** (`@midnight-ntwrk/compact-runtime` 0.16.0). This executes the compiled circuit logic and records the proof data a real proof would be built from; it does **not** generate or verify a zero-knowledge proof.
-- **15 passing tests** (`npm test`) and a **clean TypeScript typecheck** (`npm run typecheck`).
+- **15 passing tests** (`npm test`) and a **clean TypeScript typecheck** (`npm run typecheck`). These drive the compiled contract through the Midnight JavaScript runtime (`@midnight-ntwrk/compact-runtime` 0.16.0), which executes the circuit logic and records proof data without building a zero-knowledge proof.
 - Privacy is asserted structurally, by inspecting the `ProofData` surfaces the runtime emits rather than by inspecting the ledger alone. See [Public state vs. private witness](#public-state-vs-private-witness).
+- Deployed to **Preview** at `4cadbd77b6decdc66102de0c91db539eeaa3ee876d1613ae44debde3e550dd0f`, block 634539.
 
-**Not done yet — planned:**
+**Level 2 — the frontend in [`app/`](app/README.md).**
 
-- **No testnet deployment.** VeilPay has not been deployed to Preview or Preprod, and there is no contract address. `scripts/deploy.ts` exists but has not been run against a live network.
-- **Prover-backed end-to-end verification.** Nothing yet exercises the proof server, so the generated proof itself is unverified; only the interpreter-level logic and disclosure structure are covered.
-- **Wallet integration and a real payment flow.** There is no wallet UI, no merchant side, and no settlement — `canSpend()` is a policy primitive, not yet a payment.
+- Connects the Lace wallet, looks the deployed contract up through the wallet's own indexer, and confirms the on-chain verifier key matches the one compiled here.
+- Runs `canSpend` from the browser and has the **wallet** prove it — `getProvingProvider()` supplies a ledger-shaped prover, so no local proof server is involved. Verified end to end in a real browser against real Lace.
+- Reports the [observable privacy behaviour](#the-privacy-claim-and-how-to-observe-it) as measured byte counts rather than as a claim.
+- Balancing and submission stay deliberately unwired: the proof is built and measured, and nothing reaches the chain.
+
+**Not done yet:**
+
+- **No merchant side and no settlement.** `canSpend()` is a policy primitive, not yet a payment.
+- **No hosted demo.** The frontend runs locally.
 
 ## Initial product idea
 
@@ -51,6 +57,31 @@ The suite asserts this structurally rather than taking it on trust. Checking the
 The budget is encoded with the same `Uint<64>` descriptor the compiler emitted, then searched for byte-wise across each surface. Two positive controls keep those checks honest: the budget's bytes *must* be found in the private transcript, and the public transcript dump *must* be non-empty — so a leak would genuinely fail the assertion rather than pass by absence.
 
 A further test runs two different budgets against the same price and requires the public transcript, input and output to come out byte-identical, while the private transcripts differ. Nothing observable distinguishes a user with a large budget from one with a small one.
+
+## The privacy claim, and how to observe it
+
+**The claim.** A user proves a purchase fits a budget without revealing the budget, the remaining balance, or the spending history. The only thing released is one boolean.
+
+That is a claim about what is *absent* from the transaction, which is exactly the kind of claim a demo tends to assert rather than show. The frontend makes it observable by measuring the same call at three stages of proving and printing the byte counts:
+
+| Stage | What it is |
+| --- | --- |
+| Unproven call | The circuit call as built locally, before the wallet proves anything |
+| Proven call | The same call once the wallet has attached a zero-knowledge proof |
+| Public transcript | The proven call with `eraseProofs()` applied — what is left once the proof is stripped |
+
+Measured against the live Preview contract with real Lace:
+
+```text
+unproven          493 bytes
+proven           3304 bytes
+proofs erased     382 bytes
+→ proof itself   2922 bytes
+```
+
+The 2,922 bytes of proof are what convince a verifier the budget check passed. The 382-byte public transcript that remains after erasing them carries the price and the boolean and nothing else — no budget, and no value derived from it. Change the private budget and re-run: the boolean flips, and these shapes do not.
+
+Two details make this evidence rather than decoration. The proof is produced by the wallet's own `getProvingProvider()`, so its size is not something this repository controls. And `eraseProofs()` is a ledger operation on a real transaction — an empty stub could return `undefined` and satisfy a `proved !== undefined` check, but it could not produce a 3,304-byte transaction that shrinks to 382 bytes when its proofs are removed.
 
 ## Requirements
 
@@ -100,8 +131,6 @@ The 15 tests cover:
 
 ## Preview / Preprod deployment
 
-**Not yet performed.** This section documents the intended procedure; the steps below have not been run against a live network, and no contract address exists yet.
-
 Deployment needs Node 22, Docker, a running proof server, and a funded Midnight wallet for Preview or Preprod. This repository already contains the `zkir` and key material required to build.
 
 Start the proof server in one terminal:
@@ -137,6 +166,9 @@ VEILPAY_NETWORK=preprod npm run deploy
 | `VEILPAY_POLICY_VERSION` | no | `1` | Initial public policy version |
 | `VEILPAY_BUDGET` | no | `1000` | Initial private budget, kept on this machine |
 | `VEILPAY_SYNC_TIMEOUT_MS` | no | `3600000` | Time budget for the initial wallet sync |
+| `VEILPAY_CHECKPOINT_MS` | no | `300000` | How often sync progress is saved; `0` disables it |
+| `VEILPAY_CHECKPOINT_DIR` | no | `.states` | Where checkpoints are written |
+| `VEILPAY_SYNC_ONLY` | no | — | `1` syncs and checkpoints, then stops without deploying |
 
 The wallet seed is a secret. `.env` is gitignored (only `.env.example` is tracked) — never commit a real seed.
 
@@ -149,6 +181,21 @@ Deployment transaction: 006017deda3ff7f9560848d160f21f727677b8c9ad9e048a7cd7b6ed
 ```
 
 Deployed at block 634539 on 2026-08-29 with `policyVersion` 1.
+
+### Resumable sync
+
+Preprod is a different proposition from Preview: its dust chain is roughly 1.5M events against Preview's 166K, so the initial scan runs for hours rather than half an hour. A wallet built the ordinary way starts that scan from genesis *every time it starts*, which makes any interruption — a closed laptop, a Ctrl-C, a network drop — cost the whole run.
+
+`scripts/walletCheckpoint.ts` removes that cliff. Each of the three wallets exposes `serializeState()`, each wallet class exposes `restore()`, and testkit's `MidnightWalletProvider.withWallet` accepts an externally assembled facade; joining those lets the deploy script write its sync position to `.states/` as it goes and pick up from there next time. Progress is saved on a timer, once more when the sync completes, and again on `SIGINT`/`SIGTERM` before exiting.
+
+Because syncing is the expensive half and deploying is the irreversible one, the two can be separated:
+
+```bash
+VEILPAY_NETWORK=preprod VEILPAY_SYNC_ONLY=1 npm run deploy   # hours, resumable, deploys nothing
+VEILPAY_NETWORK=preprod npm run deploy                       # starts from the checkpoint
+```
+
+A checkpoint is ignored — and the sync restarts from genesis — when it was written for a different network, by a different wallet seed, or in an older format. Checkpoints hold chain state, never the seed; `.states/` is gitignored.
 
 As submission evidence, the build terminal screenshot should show the `canSpend` circuit and the `keys/` output, and the deployment screenshot should show the network together with the contract address.
 
@@ -167,6 +214,20 @@ As submission evidence, the build terminal screenshot should show the `canSpend`
 
 Take the compile screenshot in a real terminal: the compiler renders the circuit list interactively, so it disappears if the output is piped or redirected to a file.
 
+## Submission checklist (Level 2 — Waxing Crescent)
+
+| Requirement | Status |
+| --- | --- |
+| Lace wallet connect / disconnect implemented | Done — connect via `connect(networkId)`; the connector API has no `disconnect`, so the UI offers "End session here" and says plainly what it does and does not revoke |
+| Circuit called successfully from the frontend | Done — `canSpend` runs in the browser and the wallet proves it |
+| An observable privacy behaviour | Done — [measured byte counts](#the-privacy-claim-and-how-to-observe-it) separating the proof from the public transcript |
+| Contract deployed to Preprod with a verifiable address | In progress — Preview is live; the Preprod sync is what [resumable sync](#resumable-sync) exists to make survivable |
+| Public GitHub repository with README | Done |
+| README documenting the privacy claim | Done |
+| Live demo link | Not done |
+| Demo video: wallet connect + a successful circuit call | Not done |
+| Minimum 8 meaningful commits | Done |
+
 ## Project structure
 
 ```text
@@ -175,6 +236,8 @@ contracts/managed/spending_policy/      Compiled contract, circuits and keys
 src/midnight/witnesses.ts               Private state and witness implementation
 src/midnight/spending-policy.test.ts    Circuit behaviour tests
 scripts/deploy.ts                       Preview / Preprod deployment script
+scripts/walletCheckpoint.ts             Resumable wallet sync for long Preprod scans
+app/                                    Level 2 frontend (Vite + React) — see app/README.md
 .env.example                            Deployment settings template
 docs/screenshots/                       Compile and deployment evidence
 ```
