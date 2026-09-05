@@ -46,8 +46,15 @@ const PASSPHRASE_CLASSES = [/[A-Z]/, /[a-z]/, /[0-9]/, /[^A-Za-z0-9]/] as const;
 
 const REQUIRED_CLASSES = 3;
 
-/** Length below which a passphrase is not worth encrypting anything with. */
-const MIN_PASSPHRASE_LENGTH = 12;
+/**
+ * Shortest passphrase the private-state store accepts.
+ *
+ * Sixteen is the store's own floor, not a preference: a shorter one is rejected
+ * deep inside the first lookup with "Password is shorter than 16 characters".
+ * Checking a lower number here would let exactly the failure this function
+ * exists to pre-empt through.
+ */
+const MIN_PASSPHRASE_LENGTH = 16;
 
 /**
  * Reports why a passphrase is unusable, or `null` when it is fine.

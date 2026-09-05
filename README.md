@@ -13,8 +13,9 @@ VeilPay is a payment policy on Midnight that checks purchases against a private 
 
 **Level 2 — the frontend in [`app/`](app/README.md).**
 
-- Connects the Lace wallet, looks the deployed contract up through the wallet's own indexer, and confirms the on-chain verifier key matches the one compiled here.
-- Runs `canSpend` from the browser and has the **wallet** prove it — `getProvingProvider()` supplies a ledger-shaped prover, so no local proof server is involved. Verified end to end in a real browser against real Lace.
+- Deployed to **Preprod** at `929883d2a7d3bab4656315bb13a1c38fc5ca1bf7173ec33db41252f83c55e663`, block 2402474, on 2026-09-04. The app targets Preprod; the Preview deployment above is left in place but is no longer what the frontend points at.
+- Connects the Lace wallet, looks the deployed contract up through the wallet's own indexer, and confirms the on-chain verifier key matches the one compiled here. **Verified against Preprod with real Lace on 2026-09-05:** connection, network match, contract lookup and the verifier-key comparison all pass.
+- Runs `canSpend` from the browser and has the **wallet** prove it — `getProvingProvider()` supplies a ledger-shaped prover, so this repository never runs a proof server for the browser path. Proving was verified end to end against **Preview**; see [Proving on Preprod](#proving-on-preprod) for its current state.
 - Reports the [observable privacy behaviour](#the-privacy-claim-and-how-to-observe-it) as measured byte counts rather than as a claim.
 - Balancing and submission stay deliberately unwired: the proof is built and measured, and nothing reaches the chain.
 
@@ -70,7 +71,7 @@ That is a claim about what is *absent* from the transaction, which is exactly th
 | Proven call | The same call once the wallet has attached a zero-knowledge proof |
 | Public transcript | The proven call with `eraseProofs()` applied — what is left once the proof is stripped |
 
-Measured against the live Preview contract with real Lace:
+Measured against the live **Preview** contract with real Lace. The same measurement has not yet been repeated on Preprod — see [Proving on Preprod](#proving-on-preprod):
 
 ```text
 unproven          493 bytes
@@ -82,6 +83,31 @@ proofs erased     382 bytes
 The 2,922 bytes of proof are what convince a verifier the budget check passed. The 382-byte public transcript that remains after erasing them carries the price and the boolean and nothing else — no budget, and no value derived from it. Change the private budget and re-run: the boolean flips, and these shapes do not.
 
 Two details make this evidence rather than decoration. The proof is produced by the wallet's own `getProvingProvider()`, so its size is not something this repository controls. And `eraseProofs()` is a ledger operation on a real transaction — an empty stub could return `undefined` and satisfy a `proved !== undefined` check, but it could not produce a 3,304-byte transaction that shrinks to 382 bytes when its proofs are removed.
+
+## Proving on Preprod
+
+Proving is delegated to the wallet, and Lace in turn delegates it to Midnight's
+public Preprod proof server. That is worth stating plainly, because "the wallet
+proves it" reads as though the work happens inside the extension: the browser
+fetches the prover key and ZK IR from this app at `/zk`, hands them to
+`getProvingProvider()`, and Lace posts the proving request to
+`https://proof-server.preprod.midnight.network`. No proof server runs locally
+for the browser path — but a remote one is on the critical path.
+
+On 2026-09-05 that server would not prove. Fifteen `POST /prove` calls across
+roughly ninety minutes returned **503**, while `POST /check` returned 200 and
+every artifact this app serves returned 200. The failure surfaces in the UI as
+`'prove' returned an error: TypeError: Failed to fetch`, which is what a
+rejected cross-origin request looks like from the page's side.
+
+Everything up to that boundary is verified on Preprod: the wallet connects, the
+network matches, `findDeployedContract` finds the contract through the wallet's
+own indexer, and the on-chain verifier key matches the compiled one. The step
+that remains unverified on Preprod is proof generation itself, and it is blocked
+by a service this repository does not control. An empty probe to that server is
+not evidence it recovered — it answers 400 to a malformed body whether or not
+the proving backend is healthy, so the only real test is another attempt from
+the page.
 
 ## Requirements
 
@@ -182,6 +208,30 @@ Deployment transaction: 006017deda3ff7f9560848d160f21f727677b8c9ad9e048a7cd7b6ed
 
 Deployed at block 634539 on 2026-08-29 with `policyVersion` 1.
 
+The Preprod instance the frontend targets:
+
+```text
+Network: preprod
+Contract address: 929883d2a7d3bab4656315bb13a1c38fc5ca1bf7173ec33db41252f83c55e663
+```
+
+Deployed at block 2402474 on 2026-09-04 with `policyVersion` 1, and confirmed on
+chain from the browser: `findDeployedContract` finds it through the wallet's own
+indexer and its verifier key matches the one compiled here.
+
+The deploy transaction is deliberately not quoted here. Three identifiers name
+that deployment, each from a different system, and they disagree:
+
+| Name | Source |
+| --- | --- |
+| Deployment identifier | `scripts/deploy.ts`, stored as `deploymentTransaction` in `deployment.preprod.json` |
+| Indexer txId | The wallet's indexer, via `findDeployedContract` — the value the frontend displays |
+| Explorer transaction hash | The block explorer |
+
+All three are listed with their values in `app/src/config/network.ts`. Why they
+differ has not been established, so quote the contract address and block height
+2402474 — which all three sources agree on — rather than a transaction id.
+
 ### Resumable sync
 
 Preprod is a different proposition from Preview: its dust chain is roughly 1.5M events against Preview's 166K, so the initial scan runs for hours rather than half an hour. A wallet built the ordinary way starts that scan from genesis *every time it starts*, which makes any interruption — a closed laptop, a Ctrl-C, a network drop — cost the whole run.
@@ -219,9 +269,9 @@ Take the compile screenshot in a real terminal: the compiler renders the circuit
 | Requirement | Status |
 | --- | --- |
 | Lace wallet connect / disconnect implemented | Done — connect via `connect(networkId)`; the connector API has no `disconnect`, so the UI offers "End session here" and says plainly what it does and does not revoke |
-| Circuit called successfully from the frontend | Done — `canSpend` runs in the browser and the wallet proves it |
+| Circuit called successfully from the frontend | Done on Preview — `canSpend` ran in the browser and the wallet proved it. Not yet reproduced on Preprod: see [Proving on Preprod](#proving-on-preprod) |
 | An observable privacy behaviour | Done — [measured byte counts](#the-privacy-claim-and-how-to-observe-it) separating the proof from the public transcript |
-| Contract deployed to Preprod with a verifiable address | In progress — Preview is live; the Preprod sync is what [resumable sync](#resumable-sync) exists to make survivable |
+| Contract deployed to Preprod with a verifiable address | Done — `929883d2a7d3bab4656315bb13a1c38fc5ca1bf7173ec33db41252f83c55e663`, block 2402474, verified from the browser |
 | Public GitHub repository with README | Done |
 | README documenting the privacy claim | Done |
 | Live demo link | Not done |

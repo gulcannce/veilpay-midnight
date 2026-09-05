@@ -1,0 +1,8 @@
+{
+  "network": "preprod",
+  "contractAddress": "929883d2a7d3bab4656315bb13a1c38fc5ca1bf7173ec33db41252f83c55e663",
+  "deploymentTransaction": "009631b3cf6e281a30cec8cf2a71cb3c58adf49cfdb18edb8537e52571abaae545",
+  "blockHeight": 2402474,
+  "policyVersion": "1",
+  "deployedAt": "2026-09-04T13:10:55.942Z"
+}

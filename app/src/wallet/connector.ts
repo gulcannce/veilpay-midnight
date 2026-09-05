@@ -94,11 +94,46 @@ export class WalletConnectionError extends Error {
   }
 }
 
+/** Ceiling on wallet-supplied error text, which is untrusted and unbounded. */
+const REASON_MAX_LENGTH = 200;
+
+/**
+ * Explains why the wallet rejected a connection.
+ *
+ * The connector rejects with a `DAppConnectorAPIError` carrying `code` and
+ * `reason`; Lace puts the real cause in `reason` and leaves `message` generic.
+ * The most common rejection is not a decline at all — a wallet sitting on
+ * another network answers "Network ID mismatch" without ever showing the user a
+ * prompt, so reporting every rejection as "declined" sends them looking in the
+ * wrong place. The text comes from the wallet, so it is treated as untrusted
+ * input: read as a string and truncated before it reaches the UI.
+ *
+ * @param error Whatever `connect()` rejected with.
+ * @param networkId The network that was asked for, named in the mismatch hint.
+ */
+const describeRejection = (error: unknown, networkId: string): string => {
+  const generic = 'The wallet did not complete the connection. It may have been declined.';
+  const raw =
+    typeof error === 'object' && error !== null && 'reason' in error
+      ? String((error as { reason: unknown }).reason)
+      : '';
+  const reason = raw.slice(0, REASON_MAX_LENGTH).trim();
+  if (reason.length === 0) return generic;
+  if (/network id mismatch/i.test(reason)) {
+    return (
+      `The wallet refused the connection: ${reason}. ` +
+      `Switch its Midnight network to "${networkId}" and connect again.`
+    );
+  }
+  return `The wallet did not complete the connection: ${reason}`;
+};
+
 /**
  * Asks the named wallet to connect for `networkId`.
  *
  * Resolution means the user approved; rejection is normal and expected when
- * they decline the prompt.
+ * they decline the prompt — or when the wallet is on another network, which it
+ * refuses without prompting at all.
  */
 export const connectWallet = async (key: string, networkId: string): Promise<ConnectedAPI> => {
   const api = window.midnight?.[key];
@@ -108,10 +143,7 @@ export const connectWallet = async (key: string, networkId: string): Promise<Con
   try {
     return await api.connect(networkId);
   } catch (error) {
-    throw new WalletConnectionError(
-      'The wallet did not complete the connection. It may have been declined.',
-      { cause: error },
-    );
+    throw new WalletConnectionError(describeRejection(error, networkId), { cause: error });
   }
 };
 

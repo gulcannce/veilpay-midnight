@@ -16,13 +16,17 @@ Implemented:
 
 - Discovery of every DApp Connector API injected under `window.midnight`, with
   `rdns`, `name`, `icon` and `apiVersion` for each
-- `connect('preview')`, `getConnectionStatus()`, `getConfiguration()`, and an
-  explicit warning when the wallet's `networkId` is not `preview`
+- `connect('preprod')`, `getConnectionStatus()`, `getConfiguration()`, and an
+  explicit warning when the wallet's `networkId` is not `preprod`. A wallet on
+  another network is refused by the connector before any prompt appears, so the
+  rejection is reported with the wallet's own reason rather than as a decline
 - The Midnight.js provider set, built from what the wallet reports:
   `indexerPublicDataProvider`, `FetchZkConfigProvider`, `levelPrivateStateProvider`,
   and a proof provider backed by the wallet's own `getProvingProvider()`
-- `findDeployedContract` against the live Preview contract, checking the on-chain
-  verifier key byte-for-byte against the one compiled in this repository
+- `findDeployedContract` against the live Preprod contract
+  (`929883d2a7d3bab4656315bb13a1c38fc5ca1bf7173ec33db41252f83c55e663`), checking
+  the on-chain verifier key byte-for-byte against the one compiled in this
+  repository
 - `canSpend(price)` — the circuit runs locally against the private budget and the
   wallet proves the result
 - Byte-count evidence for the privacy claim: the same call measured unproven,
@@ -32,12 +36,19 @@ Deliberately not implemented: `balanceTx` and `submitTx`. Both throw
 `ProviderNotWiredError`, so no code path here can reach the chain — the boundary
 is enforced in the provider set rather than by convention.
 
-## Proving happens in the wallet
+## Proving goes through the wallet, and out to a proof server
 
 There is no local proof server. Lace implements `getProvingProvider()`, which
 returns a `{ check, prove }` pair matching the ledger's own `ProvingProvider`
-type, and `createProofProvider` plugs it straight in. Proving a `canSpend` call
-takes roughly 1.4 seconds end to end.
+type, and `createProofProvider` plugs it straight in.
+
+Lace does not prove inside the extension. This page serves the prover key and ZK
+IR at `/zk`, and Lace posts the proving request to the network's public proof
+server — on Preprod, `https://proof-server.preprod.midnight.network`. That
+server is therefore on the critical path: when it answered 503 on 2026-09-05,
+proving failed here as `TypeError: Failed to fetch` with nothing wrong on this
+side. Proving a `canSpend` call took roughly 1.4 seconds end to end when it was
+measured against Preview.
 
 One consequence worth knowing before wiring anything further: reading the wallet
 keys takes about two seconds, and `balanceUnsealedTransaction` has been measured
@@ -73,8 +84,16 @@ anything else (notably `javascript:`) is dropped and no image is rendered.
 
 Service URLs come from the connected wallet via `getConfiguration()`, not from
 hardcoded constants — the wallet user may point their wallet at their own
-services. `src/config/network.ts` holds Preview reference values used only to
-detect and explain a mismatch.
+services. `src/config/network.ts` holds Preprod reference values used only to
+detect and explain a mismatch. Lace reports Blockfrost endpoints
+(`blockfrost.lw.iog.io/midnight-preprod/`) rather than the
+`indexer.preprod.midnight.network` values kept there, which is exactly why the
+wallet's own configuration is what the providers are built from.
+
+The local private-state database is encrypted with a passphrase typed into the
+page. The store requires at least 16 characters spanning three character
+classes; the page checks the same rule up front so the failure lands next to the
+input rather than inside the first lookup.
 
 ## Running
 
@@ -104,7 +123,7 @@ app/
     main.tsx                 Buffer polyfill, then mounts the app
     App.tsx                  discovery list, session panel, deployment lookup, proof panel
     styles.css
-    config/network.ts        Preview reference values, contract address
+    config/network.ts        Preprod reference values, contract address
     wallet/connector.ts      window.midnight access, version and icon screening
     wallet/useWallet.ts      connection state machine, deployment lookup, proof run
     midnight/providers.ts    the Midnight.js provider set; balance/submit refuse

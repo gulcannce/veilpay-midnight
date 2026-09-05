@@ -2,7 +2,7 @@
   "name": "veilpay-app",
   "version": "0.1.0",
   "private": true,
-  "description": "VeilPay Level 2 frontend: Lace wallet connection against the Preview spending policy.",
+  "description": "VeilPay Level 2 frontend: Lace wallet connection against the Preprod spending policy.",
   "type": "module",
   "engines": {
     "node": ">=22 <23"
